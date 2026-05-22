@@ -90,6 +90,16 @@ Gmail requires an App Password when 2FA is enabled.
 
 ---
 
+## Upgrade
+
+Pull the latest image and restart the container:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+---
+
 ## Available tags
 
 | Tag       | Description              |
