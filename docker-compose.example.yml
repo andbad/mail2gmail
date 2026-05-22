@@ -1,6 +1,6 @@
 services:
   imap2gmail:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/imap2gmail:latest
+    image: ghcr.io/andbad/imap2gmail:latest
     restart: unless-stopped
     environment:
       # Source IMAP server
