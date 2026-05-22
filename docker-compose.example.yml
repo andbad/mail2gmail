@@ -1,0 +1,23 @@
+services:
+  imap2gmail:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/imap2gmail:latest
+    restart: unless-stopped
+    environment:
+      # Source IMAP server
+      - IMAP_HOST=imap.yourprovider.com
+      - IMAP_PORT=993
+      - IMAP_USER=you@yourprovider.com
+      - IMAP_PASS=your_imap_password
+
+      # Destination SMTP (Gmail)
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=you@gmail.com
+      - SMTP_PASS=your_gmail_app_password
+      - DEST=you@gmail.com
+
+      # Options
+      - FETCH_SPAM=false        # true = also forward spam folder
+      - SPAM_FOLDER=Spam        # spam folder name on source server (Spam, Junk, etc.)
+      - DELETE_AFTER_DAYS=0     # 0 = disabled, otherwise delete messages older than X days
+      - INTERVAL_SEC=600        # seconds between each check
