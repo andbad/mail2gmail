@@ -33,7 +33,7 @@ No build required. Pull the image directly from GitHub Container Registry.
 ```yaml
 services:
   imap2gmail:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/imap2gmail:latest
+    image: ghcr.io/andbad/imap2gmail:latest
     restart: unless-stopped
     environment:
       - IMAP_HOST=imap.yourprovider.com
