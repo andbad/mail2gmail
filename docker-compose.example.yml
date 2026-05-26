@@ -1,23 +1,55 @@
 services:
-  imap2gmail:
+
+  # ── MODE: forward (default) ─────────────────────────────────────────────
+  # Fetches emails via IMAP and re-sends them to Gmail via SMTP.
+  # Simple setup: only needs a Gmail App Password.
+  # Limitation: emails appear as forwarded (re-sent by imap2gmail).
+  imap2gmail-forward:
     image: ghcr.io/andbad/imap2gmail:latest
     restart: unless-stopped
     environment:
+      - MODE=forward
       # Source IMAP server
       - IMAP_HOST=imap.yourprovider.com
       - IMAP_PORT=993
       - IMAP_USER=you@yourprovider.com
       - IMAP_PASS=your_imap_password
-
       # Destination SMTP (Gmail)
       - SMTP_HOST=smtp.gmail.com
       - SMTP_PORT=587
       - SMTP_USER=you@gmail.com
       - SMTP_PASS=your_gmail_app_password
       - DEST=you@gmail.com
-
       # Options
-      - FETCH_SPAM=false        # true = also forward spam folder
-      - SPAM_FOLDER=Spam        # spam folder name on source server (Spam, Junk, etc.)
-      - DELETE_AFTER_DAYS=0     # 0 = disabled, otherwise delete messages older than X days
-      - INTERVAL_SEC=600        # seconds between each check
+      - FETCH_SPAM=false
+      - SPAM_FOLDER=Spam
+      - DELETE_AFTER_DAYS=0
+      - INTERVAL_SEC=600
+
+  # ── MODE: import ────────────────────────────────────────────────────────
+  # Fetches emails via IMAP and inserts them directly into Gmail via API.
+  # Emails appear as originals: original sender, date, subject, headers.
+  # Requires a Google Cloud project with Gmail API enabled (see README).
+  imap2gmail-import:
+    image: ghcr.io/andbad/imap2gmail:latest
+    restart: unless-stopped
+    volumes:
+      # Mount the directory containing credentials.json and token.json
+      - ./credentials:/credentials
+    environment:
+      - MODE=import
+      # Source IMAP server
+      - IMAP_HOST=imap.yourprovider.com
+      - IMAP_PORT=993
+      - IMAP_USER=you@yourprovider.com
+      - IMAP_PASS=your_imap_password
+      # Gmail API credentials paths (inside the container)
+      - GMAIL_CREDENTIALS_FILE=/credentials/credentials.json
+      - GMAIL_TOKEN_FILE=/credentials/token.json
+      # Options
+      - GMAIL_LABEL_INBOX=true        # add INBOX label (message appears in inbox)
+      - GMAIL_LABEL_SPAM=SPAM         # Gmail label for spam messages (or leave empty)
+      - FETCH_SPAM=false
+      - SPAM_FOLDER=Spam
+      - DELETE_AFTER_DAYS=0
+      - INTERVAL_SEC=600
