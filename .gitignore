@@ -1,3 +1,5 @@
+credentials/
+state/
 docker-compose.yml
 .env
 *.pyc

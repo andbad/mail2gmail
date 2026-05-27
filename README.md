@@ -1,41 +1,49 @@
-<a href="https://www.buymeacoffee.com/andthebad" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: 41px !important;width: 174px !important;box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;-webkit-box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;" ></a>
-![GitHub Release](https://img.shields.io/github/v/release/andbad/imap2gmail)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/y/andbad/imap2gmail)
+# mail2gmail
 
-# imap2gmail
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/andthebad)
+[![GitHub Release](https://img.shields.io/github/v/release/andbad/mail2gmail)](https://github.com/andbad/mail2gmail/releases)
+[![GitHub commit activity](https://img.shields.io/github/commit-activity/y/andbad/mail2gmail)](https://github.com/andbad/mail2gmail/commits/main)
 
 **DISCLAIMER: This software is entirely vibe-coded, so be gentle with me.**
 
-A lightweight Docker container that periodically fetches emails from an external IMAP account and forwards them to Gmail.
+A lightweight Docker container that periodically fetches emails from an external IMAP or POP3 account and delivers them to Gmail.
 
 Useful as a replacement for Gmail's **"Check mail from other accounts"** (POP3) feature, which is being discontinued.
 
----
-
-## Features
-
-- Fetches unread messages from any IMAP server every N seconds
-- Forwards messages to Gmail preserving original sender, date, and subject
-- Forwarding banner in both plain text and HTML with original metadata
-- `Reply-To` set to the original sender
-- Optional: fetch and forward the spam folder (tagged `[ ** SPAM ** ]` in subject)
-- Optional: auto-delete messages on source server older than X days
-- Multi-arch image: `linux/amd64` and `linux/arm64`
+> **Migrating from imap2gmail (v2)?** All existing `IMAP_*` environment variables continue to work unchanged. See the [migration note](#migrating-from-imap2gmail-v2).
 
 ---
 
-## Usage
+## Two modes, two protocols
 
-No build required. Pull the image directly from GitHub Container Registry.
+| | `forward` (default) | `import` |
+|---|---|---|
+| **How it works** | Fetch → re-send via SMTP | Fetch → Gmail API insert |
+| **Appears in Gmail as** | Forwarded message | Original email (original sender, date, headers) |
+| **Setup complexity** | Simple — just a Gmail App Password | Moderate — requires a Google Cloud project |
+| **Preserves original sender** | Partial (Reply-To is set) | ✅ Fully |
+| **Preserves original date** | ✅ | ✅ |
+| **Preserves all headers** | ❌ | ✅ |
+| **Requires Google Cloud** | ❌ | ✅ |
 
-**1. Create your `docker-compose.yml`:**
+Both modes support **IMAP** and **POP3** as the source protocol (set via `SOURCE_PROTOCOL`).
+
+---
+
+## Mode: `forward` (default)
+
+Fetches unread messages and re-sends them to Gmail via SMTP.
+
+### Quick start — IMAP
 
 ```yaml
 services:
-  imap2gmail:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/imap2gmail:latest
+  mail2gmail:
+    image: ghcr.io/andbad/mail2gmail:latest
     restart: unless-stopped
     environment:
+      - MODE=forward
+      - SOURCE_PROTOCOL=imap        # default; can be omitted
       - IMAP_HOST=imap.yourprovider.com
       - IMAP_PORT=993
       - IMAP_USER=you@yourprovider.com
@@ -45,75 +53,240 @@ services:
       - SMTP_USER=you@gmail.com
       - SMTP_PASS=your_gmail_app_password
       - DEST=you@gmail.com
-      - FETCH_SPAM=false
-      - SPAM_FOLDER=Spam
-      - DELETE_AFTER_DAYS=0
-      - INTERVAL_SEC=600
 ```
 
-**2. Start:**
+### Quick start — POP3
+
+```yaml
+services:
+  mail2gmail:
+    image: ghcr.io/andbad/mail2gmail:latest
+    restart: unless-stopped
+    volumes:
+      - ./state:/state              # persist seen Message-IDs across restarts
+    environment:
+      - MODE=forward
+      - SOURCE_PROTOCOL=pop3
+      - POP3_HOST=pop.yourprovider.com
+      - POP3_PORT=995
+      - POP3_USER=you@yourprovider.com
+      - POP3_PASS=your_pop3_password
+      - POP3_STATE_FILE=/state/pop3_seen.json
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=you@gmail.com
+      - SMTP_PASS=your_gmail_app_password
+      - DEST=you@gmail.com
+```
 
 ```bash
 docker compose up -d
 docker compose logs -f
 ```
 
----
-
-## Environment variables
-
-| Variable             | Default          | Required | Description                                               |
-|----------------------|------------------|----------|-----------------------------------------------------------|
-| `IMAP_HOST`          | —                | ✅       | IMAP server hostname                                      |
-| `IMAP_PORT`          | `993`            |          | IMAP port (SSL)                                           |
-| `IMAP_USER`          | —                | ✅       | IMAP username / email address                             |
-| `IMAP_PASS`          | —                | ✅       | IMAP password                                             |
-| `SMTP_HOST`          | `smtp.gmail.com` |          | SMTP server hostname                                      |
-| `SMTP_PORT`          | `587`            |          | SMTP port (STARTTLS)                                      |
-| `SMTP_USER`          | —                | ✅       | SMTP username (your Gmail address)                        |
-| `SMTP_PASS`          | —                | ✅       | Gmail App Password (see below)                            |
-| `DEST`               | —                | ✅       | Destination email address                                 |
-| `FETCH_SPAM`         | `false`          |          | Set to `true` to also forward the spam folder             |
-| `SPAM_FOLDER`        | `Spam`           |          | Spam folder name on source server (`Spam`, `Junk`, etc.)  |
-| `DELETE_AFTER_DAYS`  | `0`              |          | Delete source messages older than X days (`0` = disabled) |
-| `INTERVAL_SEC`       | `600`            |          | Seconds between each check                                |
-
----
-
-## Gmail App Password
+### Gmail App Password
 
 Gmail requires an App Password when 2FA is enabled.
 
 1. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-2. Create a new App Password (e.g. "imap2gmail")
+2. Create a new App Password (e.g. "mail2gmail")
 3. Use the generated 16-character password as `SMTP_PASS`
+
+### Environment variables — `forward` mode
+
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `SOURCE_PROTOCOL` | `imap` | | `imap` or `pop3` |
+| `IMAP_HOST` | — | ✅ | IMAP server hostname (also used as POP3 host if `POP3_HOST` is not set) |
+| `IMAP_PORT` | `993` / `995` | | Port (default depends on protocol) |
+| `IMAP_USER` | — | ✅ | Username / email address |
+| `IMAP_PASS` | — | ✅ | Password |
+| `POP3_HOST` | — | | POP3 server hostname (overrides `IMAP_HOST` when `SOURCE_PROTOCOL=pop3`) |
+| `POP3_PORT` | `995` | | POP3 port |
+| `POP3_USER` | — | | POP3 username (overrides `IMAP_USER`) |
+| `POP3_PASS` | — | | POP3 password (overrides `IMAP_PASS`) |
+| `POP3_STATE_FILE` | `/tmp/pop3_seen.json` | | Path for storing seen Message-IDs (mount a volume to persist across restarts) |
+| `SMTP_HOST` | `smtp.gmail.com` | | SMTP server hostname |
+| `SMTP_PORT` | `587` | | SMTP port (STARTTLS) |
+| `SMTP_USER` | — | ✅ | SMTP username (your Gmail address) |
+| `SMTP_PASS` | — | ✅ | Gmail App Password |
+| `DEST` | — | ✅ | Destination email address |
+| `FETCH_SPAM` | `false` | | Also forward the spam folder (IMAP only) |
+| `SPAM_FOLDER` | `Spam` | | Spam folder name on source server (IMAP only) |
+| `DELETE_AFTER_DAYS` | `0` | | Delete **seen** source messages older than X days (`0` = disabled). IMAP: server-side delete. POP3: deletes from server and removes from state file. |
+| `INTERVAL_SEC` | `600` | | Seconds between each check |
 
 ---
 
+## Mode: `import`
+
+Fetches unread messages and inserts them **directly into Gmail** using the Gmail API. Emails appear as originals — original sender, date, subject, and all headers are fully preserved.
+
+### Setup overview
+
+1. Create a Google Cloud project and enable the Gmail API
+2. Download `credentials.json`
+3. Run the one-time authorization script to generate `token.json`
+4. Start the container normally
+
+### Step 1 — Create a Google Cloud project
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a project (or select an existing one).
+
+2. Enable the Gmail API:
+   - Navigate to **APIs & Services → Library**
+   - Search for "Gmail API" and click **Enable**
+
+3. Create OAuth2 credentials:
+   - Navigate to **APIs & Services → Credentials**
+   - Click **Create Credentials → OAuth client ID**
+   - Application type: **Desktop app** (important: not "Web application")
+   - Give it a name (e.g. "mail2gmail") and click **Create**
+   - Click **Download JSON** and save the file
+
+4. Add yourself as a test user:
+   - Navigate to **APIs & Services → OAuth consent screen**
+   - Under **Test users**, click **+ Add users**
+   - Add the Gmail address you want to import emails into
+   - Click **Save**
+
+### Step 2 — Set up the credentials directory
+
+```bash
+mkdir credentials
+mv ~/Downloads/client_secret_*.json credentials/credentials.json
+```
+
+### Step 3 — Authorize (one time only)
+
+```bash
+docker run --rm -it \
+  -v ./credentials:/credentials \
+  ghcr.io/andbad/mail2gmail:latest \
+  python /auth.py
+```
+
+The script will print a long Google URL. Follow these steps:
+
+1. Copy the URL and open it in your browser
+2. Sign in with your Gmail account and click **Allow**
+3. Your browser will show an error page — _"localhost refused to connect"_ — **this is expected and normal**
+4. Copy the **full URL** from the browser address bar (starts with `http://localhost/?state=...&code=...`)
+5. Paste it into the terminal and press Enter
+
+The script saves `token.json` in your `credentials/` directory. The token refreshes automatically.
+
+> **Note:** the `credentials/` directory must never be committed to version control. Add it to your `.gitignore`.
+
+### Step 4 — Start the container
+
+**IMAP source:**
+
+```yaml
+services:
+  mail2gmail:
+    image: ghcr.io/andbad/mail2gmail:latest
+    restart: unless-stopped
+    volumes:
+      - ./credentials:/credentials
+    environment:
+      - MODE=import
+      - SOURCE_PROTOCOL=imap        # default; can be omitted
+      - IMAP_HOST=imap.yourprovider.com
+      - IMAP_PORT=993
+      - IMAP_USER=you@yourprovider.com
+      - IMAP_PASS=your_imap_password
+```
+
+**POP3 source:**
+
+```yaml
+services:
+  mail2gmail:
+    image: ghcr.io/andbad/mail2gmail:latest
+    restart: unless-stopped
+    volumes:
+      - ./credentials:/credentials
+      - ./state:/state              # required — see note below
+    environment:
+      - MODE=import
+      - SOURCE_PROTOCOL=pop3
+      - POP3_HOST=pop.yourprovider.com
+      - POP3_PORT=995
+      - POP3_USER=you@yourprovider.com
+      - POP3_PASS=your_pop3_password
+      - POP3_STATE_FILE=/state/pop3_seen.json
+```
+
+> **Important — mount the state volume when using POP3.**
+> Unlike IMAP (which uses server-side `\Seen` flags), POP3 tracks already-processed
+> messages in a local file (`POP3_STATE_FILE`). If that file is lost — e.g. the
+> container is recreated without a volume — all messages will be re-downloaded and
+> re-inserted into Gmail. Gmail API will deduplicate by Message-ID, so no actual
+> duplicates will appear in your inbox, but the extra round-trips waste API quota.
+> Always mount a persistent volume for `POP3_STATE_FILE`.
+
+```bash
+docker compose up -d
+docker compose logs -f
+```
+
+### Environment variables — `import` mode
+
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `SOURCE_PROTOCOL` | `imap` | | `imap` or `pop3` |
+| `IMAP_HOST` | — | ✅ | Source server hostname |
+| `IMAP_PORT` | `993` / `995` | | Port |
+| `IMAP_USER` | — | ✅ | Username |
+| `IMAP_PASS` | — | ✅ | Password |
+| `POP3_HOST` | — | | POP3 hostname override |
+| `POP3_PORT` | `995` | | POP3 port override |
+| `POP3_USER` | — | | POP3 username override |
+| `POP3_PASS` | — | | POP3 password override |
+| `POP3_STATE_FILE` | `/tmp/pop3_seen.json` | | Seen Message-ID state (mount a volume to persist) |
+| `GMAIL_CREDENTIALS_FILE` | `/credentials/credentials.json` | ✅ | Path to OAuth2 credentials JSON |
+| `GMAIL_TOKEN_FILE` | `/credentials/token.json` | | Path where the OAuth2 token is stored |
+| `GMAIL_LABEL_INBOX` | `true` | | Add `INBOX` label so messages appear in inbox |
+| `GMAIL_LABEL_SPAM` | `SPAM` | | Gmail label applied to spam messages |
+| `FETCH_SPAM` | `false` | | Also import the spam folder (IMAP only) |
+| `SPAM_FOLDER` | `Spam` | | Spam folder name on source server (IMAP only) |
+| `DELETE_AFTER_DAYS` | `0` | | Delete **seen** source messages older than X days (`0` = disabled). IMAP: server-side delete. POP3: deletes from server and removes from state file. |
+| `INTERVAL_SEC` | `600` | | Seconds between each check |
+
+---
+
+## Migrating from imap2gmail (v2)
+
+No changes required. All `IMAP_*` environment variables and `MODE` values are fully backward-compatible. The only new required step is renaming the image reference in your `docker-compose.yml`:
+
+```yaml
+# Before
+image: ghcr.io/andbad/imap2gmail:latest
+
+# After
+image: ghcr.io/andbad/mail2gmail:latest
+```
+
+---
+
+## Upgrade
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
 ## Available tags
 
-| Tag       | Description              |
-|-----------|--------------------------|
-| `latest`  | Latest stable release    |
-| `v1.0.0`  | Specific version         |
-| `v1.0`    | Latest patch of v1.0     |
+| Tag | Description |
+|---|---|
+| `latest` | Latest stable release |
+| `v3.0.0` | Specific version |
+| `v3.0` | Latest patch of v3.0 |
 
 ---
 
 ## License
 
-[GNU General Public License v3.0](https://github.com/andbad/imap2gmail/blob/main/LICENSE)
-
-[buymecoffee]: https://www.buymeacoffee.com/andthebad
-[buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge
-[commits-shield]: https://img.shields.io/github/commit-activity/y/andbad/homeassistant-carwings.svg?style=for-the-badge
-[commits]: https://github.com/andbad/imap2gmail/commits/main
-[forum-shield]: https://img.shields.io/badge/community-forum-brightgreen.svg?style=for-the-badge
-[forum]: https://github.com/indomus/forum
-[license-shield]: https://img.shields.io/github/license/andbad/homeassistant-carwings.svg?style=for-the-badge
-[maintenance-shield]: https://img.shields.io/badge/maintainer-andbad-blue.svg?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/andbad/homeassistant-carwings.svg?style=for-the-badge
-[releases]: https://github.com/andbad/imap2gmail/releases
-[hacs-repo-badge]: https://my.home-assistant.io/badges/hacs_repository.svg
-
-
+[GNU General Public License v3.0](LICENSE)
