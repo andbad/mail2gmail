@@ -4,6 +4,10 @@
 [![GitHub Release](https://img.shields.io/github/v/release/andbad/mail2gmail)](https://github.com/andbad/mail2gmail/releases)
 [![GitHub commit activity](https://img.shields.io/github/commit-activity/y/andbad/mail2gmail)](https://github.com/andbad/mail2gmail/commits/main)
 
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/andthebad)
+[![GitHub Release](https://img.shields.io/github/v/release/andbad/imap2gmail)](https://github.com/andbad/imap2gmail/releases)
+[![GitHub commit activity](https://img.shields.io/github/commit-activity/y/andbad/imap2gmail)](https://github.com/andbad/imap2gmail/commits/main)
+
 **DISCLAIMER: This software is entirely vibe-coded, so be gentle with me.**
 
 A lightweight Docker container that periodically fetches emails from an external IMAP or POP3 account and delivers them to Gmail.
@@ -252,6 +256,24 @@ docker compose logs -f
 | `FETCH_SPAM` | `false` | | Also import the spam folder (IMAP only) |
 | `SPAM_FOLDER` | `Spam` | | Spam folder name on source server (IMAP only) |
 | `DELETE_AFTER_DAYS` | `0` | | Delete **seen** source messages older than X days (`0` = disabled). IMAP: server-side delete. POP3: deletes from server and removes from state file. |
+| `INTERVAL_SEC` | `600` | | Seconds between each check |
+
+### Environment variables
+
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `IMAP_HOST` | — | ✅ | IMAP server hostname |
+| `IMAP_PORT` | `993` | | IMAP port (SSL) |
+| `IMAP_USER` | — | ✅ | IMAP username / email address |
+| `IMAP_PASS` | — | ✅ | IMAP password |
+| `SMTP_HOST` | `smtp.gmail.com` | | SMTP server hostname |
+| `SMTP_PORT` | `587` | | SMTP port (STARTTLS) |
+| `SMTP_USER` | — | ✅ | SMTP username (your Gmail address) |
+| `SMTP_PASS` | — | ✅ | Gmail App Password |
+| `DEST` | — | ✅ | Destination email address |
+| `FETCH_SPAM` | `false` | | Set to `true` to also forward the spam folder |
+| `SPAM_FOLDER` | `Spam` | | Spam folder name on source server |
+| `DELETE_AFTER_DAYS` | `0` | | Delete source messages older than X days (`0` = disabled) |
 | `INTERVAL_SEC` | `600` | | Seconds between each check |
 
 ---
