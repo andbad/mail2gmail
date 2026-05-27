@@ -1,14 +1,15 @@
 services:
 
-  # ── MODE: forward (default) ─────────────────────────────────────────────
+  # ── MODE: forward via IMAP (default) ────────────────────────────────────
   # Fetches emails via IMAP and re-sends them to Gmail via SMTP.
   # Simple setup: only needs a Gmail App Password.
-  # Limitation: emails appear as forwarded (re-sent by imap2gmail).
-  imap2gmail-forward:
-    image: ghcr.io/andbad/imap2gmail:latest
+  # Limitation: emails appear as forwarded (re-sent by mail2gmail).
+  mail2gmail-forward-imap:
+    image: ghcr.io/andbad/mail2gmail:latest
     restart: unless-stopped
     environment:
       - MODE=forward
+      - SOURCE_PROTOCOL=imap          # default; can be omitted
       # Source IMAP server
       - IMAP_HOST=imap.yourprovider.com
       - IMAP_PORT=993
@@ -23,21 +24,50 @@ services:
       # Options
       - FETCH_SPAM=false
       - SPAM_FOLDER=Spam
-      - DELETE_AFTER_DAYS=0
+      - DELETE_AFTER_DAYS=0           # delete seen messages older than X days from source (0 = disabled)
       - INTERVAL_SEC=600
 
-  # ── MODE: import ────────────────────────────────────────────────────────
+  # ── MODE: forward via POP3 ──────────────────────────────────────────────
+  # Same as above but fetches from a POP3 server instead of IMAP.
+  # POP3_* vars take precedence over IMAP_* when SOURCE_PROTOCOL=pop3.
+  # For servers where only one protocol is configured, you can also just
+  # keep the IMAP_* names and set SOURCE_PROTOCOL=pop3 — both work.
+  mail2gmail-forward-pop3:
+    image: ghcr.io/andbad/mail2gmail:latest
+    restart: unless-stopped
+    volumes:
+      - ./state:/state                # persist seen Message-IDs across restarts
+    environment:
+      - MODE=forward
+      - SOURCE_PROTOCOL=pop3
+      # Source POP3 server (POP3_* aliases; IMAP_* names are also accepted)
+      - POP3_HOST=pop.yourprovider.com
+      - POP3_PORT=995
+      - POP3_USER=you@yourprovider.com
+      - POP3_PASS=your_pop3_password
+      - POP3_STATE_FILE=/state/pop3_seen.json
+      # Destination SMTP (Gmail)
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=you@gmail.com
+      - SMTP_PASS=your_gmail_app_password
+      - DEST=you@gmail.com
+      # Options
+      - DELETE_AFTER_DAYS=0           # delete messages older than X days from server and state file (0 = disabled)
+      - INTERVAL_SEC=600
+
+  # ── MODE: import via IMAP ────────────────────────────────────────────────
   # Fetches emails via IMAP and inserts them directly into Gmail via API.
   # Emails appear as originals: original sender, date, subject, headers.
   # Requires a Google Cloud project with Gmail API enabled (see README).
-  imap2gmail-import:
-    image: ghcr.io/andbad/imap2gmail:latest
+  mail2gmail-import-imap:
+    image: ghcr.io/andbad/mail2gmail:latest
     restart: unless-stopped
     volumes:
-      # Mount the directory containing credentials.json and token.json
-      - ./credentials:/credentials
+      - ./credentials:/credentials    # must contain credentials.json and token.json
     environment:
       - MODE=import
+      - SOURCE_PROTOCOL=imap          # default; can be omitted
       # Source IMAP server
       - IMAP_HOST=imap.yourprovider.com
       - IMAP_PORT=993
@@ -51,5 +81,36 @@ services:
       - GMAIL_LABEL_SPAM=SPAM         # Gmail label for spam messages (or leave empty)
       - FETCH_SPAM=false
       - SPAM_FOLDER=Spam
-      - DELETE_AFTER_DAYS=0
+      - DELETE_AFTER_DAYS=0           # delete seen messages older than X days from source (0 = disabled)
+      - INTERVAL_SEC=600
+
+  # ── MODE: import via POP3 ───────────────────────────────────────────────
+  # Same as import via IMAP but fetches from a POP3 server.
+  # IMPORTANT: mount a volume for POP3_STATE_FILE. POP3 has no server-side
+  # seen flags — processed Message-IDs are tracked locally. If the file is
+  # lost and the container is recreated, all messages will be re-downloaded.
+  # Gmail API deduplicates by Message-ID so no duplicates appear in your
+  # inbox, but the extra requests waste API quota.
+  mail2gmail-import-pop3:
+    image: ghcr.io/andbad/mail2gmail:latest
+    restart: unless-stopped
+    volumes:
+      - ./credentials:/credentials    # must contain credentials.json and token.json
+      - ./state:/state                # persist POP3 seen-message state
+    environment:
+      - MODE=import
+      - SOURCE_PROTOCOL=pop3
+      # Source POP3 server
+      - POP3_HOST=pop.yourprovider.com
+      - POP3_PORT=995
+      - POP3_USER=you@yourprovider.com
+      - POP3_PASS=your_pop3_password
+      - POP3_STATE_FILE=/state/pop3_seen.json
+      # Gmail API credentials paths (inside the container)
+      - GMAIL_CREDENTIALS_FILE=/credentials/credentials.json
+      - GMAIL_TOKEN_FILE=/credentials/token.json
+      # Options
+      - GMAIL_LABEL_INBOX=true
+      - GMAIL_LABEL_SPAM=SPAM
+      - DELETE_AFTER_DAYS=0           # delete messages older than X days from server and state file (0 = disabled)
       - INTERVAL_SEC=600

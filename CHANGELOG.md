@@ -7,11 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.0.0] - 2026-05-24
+## [2.0.0] - 2026-05-26
 
 ### Added
 - **New `import` mode** (`MODE=import`): emails are inserted directly into Gmail via the Gmail API (`messages.insert`), preserving all original headers — sender, recipient, date, subject, and full MIME structure — exactly as received. No SMTP involved.
 - `import.py`: new script implementing the Gmail API import flow.
+- `auth.py`: dedicated one-time OAuth2 authorization script. Runs inside Docker with no local dependencies required. Prints the Google authorization URL, waits for the user to paste back the redirect URL from the browser address bar, and saves `token.json` automatically.
 - OAuth2 authentication flow with automatic token refresh. Token is persisted to disk and reused across restarts.
 - Deduplication: messages that are already in Gmail (detected via Gmail API 400 response on duplicate Message-ID) are skipped and marked as seen on the source server.
 - `GMAIL_CREDENTIALS_FILE` and `GMAIL_TOKEN_FILE` environment variables to configure OAuth2 credentials paths.
@@ -20,10 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MODE` environment variable to select between `forward` (default) and `import`.
 - Google API dependencies (`google-api-python-client`, `google-auth-oauthlib`) added to Docker image.
 - `docker-compose.example.yml` now documents both modes side by side.
+- `.gitignore` entry for `credentials/` directory to prevent accidental commit of OAuth2 secrets.
 
 ### Changed
 - `Dockerfile`: now installs Google API Python libraries; runs either `forward.py` or `import.py` based on `MODE`.
-- `README.md`: restructured to document both modes with a comparison table and step-by-step OAuth2 setup guide.
+- `README.md`: restructured to document both modes with a comparison table and detailed step-by-step OAuth2 setup guide, including exact browser behaviour during authorization (`ERR_SOCKET_NOT_CONNECTED` is expected).
+
+### Notes on OAuth2 authorization
+The standard `run_local_server` approach does not work inside Docker because the container's loopback interface is not reachable from the host browser. `auth.py` uses a copy/paste URL flow instead: the user opens the Google authorization URL manually, and after granting access pastes the full redirect URL (including the `?code=` parameter) back into the terminal. No port mapping or local Python installation required.
 
 ---
 
