@@ -4,9 +4,6 @@
 [![GitHub Release](https://img.shields.io/github/v/release/andbad/mail2gmail)](https://github.com/andbad/mail2gmail/releases)
 [![GitHub commit activity](https://img.shields.io/github/commit-activity/y/andbad/mail2gmail)](https://github.com/andbad/mail2gmail/commits/main)
 
-[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/andthebad)
-[![GitHub Release](https://img.shields.io/github/v/release/andbad/imap2gmail)](https://github.com/andbad/imap2gmail/releases)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/y/andbad/imap2gmail)](https://github.com/andbad/imap2gmail/commits/main)
 
 **DISCLAIMER: This software is entirely vibe-coded, so be gentle with me.**
 
