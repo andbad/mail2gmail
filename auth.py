@@ -1,13 +1,15 @@
 """
 One-time OAuth2 authorization script.
+
 Run this once to generate token.json, then use import.py normally.
 
 Usage:
-  docker run --rm -it \\
-    -v ./credentials:/credentials \\
-    ghcr.io/andbad/mail2gmail:latest \\
-    python /auth.py
+    docker run --rm -it \
+      -v ./credentials:/credentials \
+      ghcr.io/andbad/mail2gmail:latest \
+      python /auth.py
 """
+
 import json
 import os
 import sys
@@ -17,9 +19,9 @@ from urllib.parse import parse_qs, urlparse
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 CREDENTIALS_FILE = os.environ.get("GMAIL_CREDENTIALS_FILE", "/credentials/credentials.json")
-TOKEN_FILE       = os.environ.get("GMAIL_TOKEN_FILE",        "/credentials/token.json")
-SCOPES           = ["https://www.googleapis.com/auth/gmail.insert"]
-REDIRECT_URI     = "http://localhost"
+TOKEN_FILE = os.environ.get("GMAIL_TOKEN_FILE", "/credentials/token.json")
+SCOPES = ["https://www.googleapis.com/auth/gmail.insert"]
+REDIRECT_URI = "http://localhost"
 
 if not Path(CREDENTIALS_FILE).exists():
     print(f"Error: credentials.json not found at {CREDENTIALS_FILE}")
@@ -41,6 +43,7 @@ if REDIRECT_URI not in redirect_uris:
 
 flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
 flow.redirect_uri = REDIRECT_URI
+
 auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
 
 print()
