@@ -84,7 +84,38 @@ services:
       - GMAIL_LABEL_SPAM=SPAM       # Gmail label for spam messages (or leave empty)
       - FETCH_SPAM=false
       - SPAM_FOLDER=Spam
-      - DELETE_AFTER_DAYS=0
+      - DELETE_AFTER_DAYS=0           # delete seen messages older than X days from source (0 = disabled)
+      - INTERVAL_SEC=600
+
+  # ── MODE: import via POP3 ───────────────────────────────────────────────
+  # Same as import via IMAP but fetches from a POP3 server.
+  # IMPORTANT: mount a volume for POP3_STATE_FILE. POP3 has no server-side
+  # seen flags — processed Message-IDs are tracked locally. If the file is
+  # lost and the container is recreated, all messages will be re-downloaded.
+  # Gmail API deduplicates by Message-ID so no duplicates appear in your
+  # inbox, but the extra requests waste API quota.
+  mail2gmail-import-pop3:
+    image: ghcr.io/andbad/mail2gmail:latest
+    restart: unless-stopped
+    volumes:
+      - ./credentials:/credentials    # must contain credentials.json and token.json
+      - ./state:/state                # persist POP3 seen-message state
+    environment:
+      - MODE=import
+      - SOURCE_PROTOCOL=pop3
+      # Source POP3 server
+      - POP3_HOST=pop.yourprovider.com
+      - POP3_PORT=995
+      - POP3_USER=you@yourprovider.com
+      - POP3_PASS=your_pop3_password
+      - POP3_STATE_FILE=/state/pop3_seen.json
+      # Gmail API credentials paths (inside the container)
+      - GMAIL_CREDENTIALS_FILE=/credentials/credentials.json
+      - GMAIL_TOKEN_FILE=/credentials/token.json
+      # Options
+      - GMAIL_LABEL_INBOX=true
+      - GMAIL_LABEL_SPAM=SPAM
+      - DELETE_AFTER_DAYS=0           # delete messages older than X days from server and state file (0 = disabled)
       - INTERVAL_SEC=600
 
   # ── MODE: import via POP3 ───────────────────────────────────────────────
