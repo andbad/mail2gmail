@@ -26,11 +26,6 @@ Environment variables:
   FETCH_SPAM        true | false (default: false)
   SPAM_FOLDER       folder name (default: Spam)
   DELETE_AFTER_DAYS integer (default: 0 = disabled)
-
-  # Retry / backoff
-  RETRY_MAX_ATTEMPTS  max connection attempts before giving up (default: 5)
-  RETRY_WAIT_MIN      min seconds between retries (default: 10)
-  RETRY_WAIT_MAX      max seconds between retries (default: 120)
 """
 
 import email
@@ -39,15 +34,8 @@ import json
 import os
 import poplib
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -69,10 +57,6 @@ else:
     FETCH_SPAM = os.environ.get("FETCH_SPAM", "false").lower() == "true"
     SPAM_FOLDER = os.environ.get("SPAM_FOLDER", "Spam")
     DELETE_AFTER_DAYS = int(os.environ.get("DELETE_AFTER_DAYS", "0"))
-
-RETRY_MAX_ATTEMPTS = int(os.environ.get("RETRY_MAX_ATTEMPTS", "5"))
-RETRY_WAIT_MIN = int(os.environ.get("RETRY_WAIT_MIN", "10"))
-RETRY_WAIT_MAX = int(os.environ.get("RETRY_WAIT_MAX", "120"))
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -120,42 +104,22 @@ def _save_pop3_state(seen: set):
 
 def _parse_date(date_str: str):
     """
-    Parse an RFC 2822 Date header into a naive local datetime.
+    Parse an RFC 2822 Date header and return a naive UTC datetime.
     Returns None if the string is missing or unparseable.
+
+    Uses .astimezone(utc) before stripping tzinfo so that messages with
+    non-UTC offsets (e.g. CEST +02:00) are correctly normalised before
+    comparison with datetime.utcnow(). Previously .replace(tzinfo=None)
+    was used, which discarded the offset without converting the value and
+    caused DELETE_AFTER_DAYS to be off by the UTC offset of the sender.
     """
     if not date_str:
         return None
     try:
         ts = email.utils.parsedate_to_datetime(date_str)
-        # Convert to naive UTC for comparison with datetime.now()
-        return ts.replace(tzinfo=None)
+        return ts.astimezone(timezone.utc).replace(tzinfo=None)
     except Exception:
         return None
-
-# ---------------------------------------------------------------------------
-# Retry helpers
-# ---------------------------------------------------------------------------
-
-def _make_retry(protocol_name: str):
-    """Return a tenacity @retry decorator configured from env vars."""
-
-    def _before_sleep(retry_state):
-        exc = retry_state.outcome.exception()
-        attempt = retry_state.attempt_number
-        next_wait = retry_state.next_action.sleep
-        _log(
-            f"{protocol_name} connection failed (attempt {attempt}/{RETRY_MAX_ATTEMPTS}): "
-            f"{exc}. Retrying in {next_wait:.0f}s...",
-            error=True,
-        )
-
-    return retry(
-        retry=retry_if_exception_type(Exception),
-        stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
-        wait=wait_exponential(multiplier=1, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX),
-        before_sleep=_before_sleep,
-        reraise=True,
-    )
 
 # ---------------------------------------------------------------------------
 # POP3 fetch
@@ -182,17 +146,12 @@ def fetch_pop3(callback):
     seen = _load_pop3_state()
     new_seen = set(seen)
 
-    @_make_retry("POP3")
-    def _connect():
+    try:
         pop = poplib.POP3_SSL(MAIL_HOST, MAIL_PORT)
         pop.user(MAIL_USER)
         pop.pass_(MAIL_PASS)
-        return pop
-
-    try:
-        pop = _connect()
     except Exception as e:
-        _log(f"POP3 connection failed after {RETRY_MAX_ATTEMPTS} attempts: {e}", error=True)
+        _log(f"POP3 connection failed: {e}", error=True)
         raise
 
     try:
@@ -207,7 +166,7 @@ def fetch_pop3(callback):
         to_delete = []  # [(index, msg_id)]
         cutoff = None
         if DELETE_AFTER_DAYS > 0:
-            cutoff = datetime.now() - timedelta(days=DELETE_AFTER_DAYS)
+            cutoff = datetime.utcnow() - timedelta(days=DELETE_AFTER_DAYS)
 
         for i in range(1, count + 1):
             raw_headers = b"\r\n".join(pop.top(i, 0)[1])
@@ -271,17 +230,11 @@ def fetch_imap(callback):
     callback(raw_bytes, folder, is_spam) must return True on success so
     the message is marked \\Seen on the server.
     """
-
-    @_make_retry("IMAP")
-    def _connect():
+    try:
         imap = imaplib.IMAP4_SSL(MAIL_HOST, MAIL_PORT)
         imap.login(MAIL_USER, MAIL_PASS)
-        return imap
-
-    try:
-        imap = _connect()
     except Exception as e:
-        _log(f"IMAP connection failed after {RETRY_MAX_ATTEMPTS} attempts: {e}", error=True)
+        _log(f"IMAP connection failed: {e}", error=True)
         raise
 
     try:

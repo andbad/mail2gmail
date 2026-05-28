@@ -272,20 +272,6 @@ docker compose logs -f
 
 No changes required. All `IMAP_*` environment variables and `MODE` values are fully backward-compatible. The only new required step is renaming the image reference in your `docker-compose.yml`:
 
-```
-# Before
-image: ghcr.io/andbad/imap2gmail:latest
-
-# After
-image: ghcr.io/andbad/mail2gmail:latest
-```
-
----
-
-## Migrating from imap2gmail (v2)
-
-No changes required. All `IMAP_*` environment variables and `MODE` values are fully backward-compatible. The only new required step is renaming the image reference in your `docker-compose.yml`:
-
 ```yaml
 # Before
 image: ghcr.io/andbad/imap2gmail:latest

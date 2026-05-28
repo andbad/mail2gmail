@@ -65,8 +65,10 @@ def insert_message(service, raw_bytes, label_ids):
         )
         return result.get("id")
     except HttpError as e:
-        # 400 "Invalid argument" typically means duplicate Message-ID
-        if e.resp.status == 400:
+        # Only treat 400 as duplicate when the error body explicitly says so.
+        # Other 400s (malformed message, invalid encoding, etc.) are real errors
+        # and must be re-raised so the message is not silently marked as seen.
+        if e.resp.status == 400 and "duplicate" in str(e).lower():
             raise DuplicateMessageError(str(e)) from e
         raise
 
