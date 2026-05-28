@@ -11,11 +11,10 @@ from googleapiclient.errors import HttpError
 
 from fetch import check_source_config, fetch, _log as log
 
-CREDENTIALS_FILE  = os.environ.get("GMAIL_CREDENTIALS_FILE", "/credentials/credentials.json")
-TOKEN_FILE        = os.environ.get("GMAIL_TOKEN_FILE", "/credentials/token.json")
+CREDENTIALS_FILE = os.environ.get("GMAIL_CREDENTIALS_FILE", "/credentials/credentials.json")
+TOKEN_FILE = os.environ.get("GMAIL_TOKEN_FILE", "/credentials/token.json")
 GMAIL_LABEL_INBOX = os.environ.get("GMAIL_LABEL_INBOX", "true").lower() == "true"
-GMAIL_LABEL_SPAM  = os.environ.get("GMAIL_LABEL_SPAM", "SPAM")
-
+GMAIL_LABEL_SPAM = os.environ.get("GMAIL_LABEL_SPAM", "SPAM")
 SCOPES = ["https://www.googleapis.com/auth/gmail.insert"]
 
 
@@ -31,10 +30,8 @@ def check_config():
 def get_gmail_service():
     creds = None
     token_path = Path(TOKEN_FILE)
-
     if token_path.exists():
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             log("Refreshing Gmail OAuth2 token...")
@@ -43,14 +40,12 @@ def get_gmail_service():
             # No valid token and no way to refresh — require auth.py to be run first.
             log("Error: no valid OAuth2 token found.", error=True)
             log(f"Run auth.py first to generate {TOKEN_FILE}:", error=True)
-            log("  docker run --rm -it -v ./credentials:/credentials "
+            log(" docker run --rm -it -v ./credentials:/credentials "
                 "ghcr.io/andbad/mail2gmail:latest python /auth.py", error=True)
             sys.exit(1)
-
         token_path.parent.mkdir(parents=True, exist_ok=True)
         token_path.write_text(creds.to_json())
         log(f"Token saved to {TOKEN_FILE}")
-
     return build("gmail", "v1", credentials=creds)
 
 
@@ -81,7 +76,7 @@ def make_callback(service, label_ids, folder_label):
         try:
             msg = email.message_from_bytes(raw_bytes)
             subject = msg.get("Subject", "(no subject)")
-            sender  = msg.get("From", "unknown")
+            sender = msg.get("From", "unknown")
 
             # For spam, use configured spam label; otherwise use the passed label_ids
             if is_spam:
@@ -92,7 +87,6 @@ def make_callback(service, label_ids, folder_label):
             gmail_id = insert_message(service, raw_bytes, ids)
             log(f"[{folder}] Imported: {subject!r} | From: {sender} → Gmail ID: {gmail_id}")
             return True
-
         except DuplicateMessageError:
             log(f"[{folder}] Skipped duplicate (Message-ID already in Gmail)")
             return True  # mark seen so we don't retry forever
@@ -106,10 +100,8 @@ def make_callback(service, label_ids, folder_label):
 def run():
     check_config()
     service = get_gmail_service()
-
     inbox_labels = ["INBOX", "UNREAD"] if GMAIL_LABEL_INBOX else ["UNREAD"]
     callback = make_callback(service, inbox_labels, "INBOX")
-
     fetch(callback)
 
 

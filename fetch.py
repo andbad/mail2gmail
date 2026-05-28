@@ -2,30 +2,35 @@
 fetch.py — shared email fetching logic for mail2gmail.
 
 Supports two protocols:
-  - IMAP (default): uses UNSEEN flag; supports folders and server-side delete.
-  - POP3: tracks seen Message-IDs in a local state file; inbox only.
+- IMAP (default): uses UNSEEN flag; supports folders and server-side delete.
+- POP3: tracks seen Message-IDs in a local state file; inbox only.
 
 Environment variables:
-  SOURCE_PROTOCOL   imap | pop3          (default: imap)
+  SOURCE_PROTOCOL   imap | pop3 (default: imap)
 
   # Common — IMAP_* vars are the canonical names; POP3_* aliases take
   # precedence when SOURCE_PROTOCOL=pop3 so users can have both sets.
-  IMAP_HOST         hostname             (required)
-  IMAP_USER         username             (required)
-  IMAP_PASS         password             (required)
-  IMAP_PORT         port                 (default: 993 for IMAP, 995 for POP3)
+  IMAP_HOST         hostname (required)
+  IMAP_USER         username (required)
+  IMAP_PASS         password (required)
+  IMAP_PORT         port (default: 993 for IMAP, 995 for POP3)
 
   # POP3-specific overrides
   POP3_HOST         hostname
   POP3_USER         username
   POP3_PASS         password
-  POP3_PORT         port                 (default: 995)
-  POP3_STATE_FILE   path                 (default: /tmp/pop3_seen.json)
+  POP3_PORT         port (default: 995)
+  POP3_STATE_FILE   path (default: /tmp/pop3_seen.json)
 
   # IMAP-only
-  FETCH_SPAM        true | false         (default: false)
-  SPAM_FOLDER       folder name          (default: Spam)
-  DELETE_AFTER_DAYS integer              (default: 0 = disabled)
+  FETCH_SPAM        true | false (default: false)
+  SPAM_FOLDER       folder name (default: Spam)
+  DELETE_AFTER_DAYS integer (default: 0 = disabled)
+
+  # Retry / backoff
+  RETRY_MAX_ATTEMPTS  max connection attempts before giving up (default: 5)
+  RETRY_WAIT_MIN      min seconds between retries (default: 10)
+  RETRY_WAIT_MAX      max seconds between retries (default: 120)
 """
 
 import email
@@ -36,6 +41,13 @@ import poplib
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -54,11 +66,13 @@ else:
     MAIL_USER = os.environ.get("IMAP_USER", "")
     MAIL_PASS = os.environ.get("IMAP_PASS", "")
     MAIL_PORT = int(os.environ.get("IMAP_PORT", "993"))
+    FETCH_SPAM = os.environ.get("FETCH_SPAM", "false").lower() == "true"
+    SPAM_FOLDER = os.environ.get("SPAM_FOLDER", "Spam")
+    DELETE_AFTER_DAYS = int(os.environ.get("DELETE_AFTER_DAYS", "0"))
 
-FETCH_SPAM        = os.environ.get("FETCH_SPAM", "false").lower() == "true"
-SPAM_FOLDER       = os.environ.get("SPAM_FOLDER", "Spam")
-DELETE_AFTER_DAYS = int(os.environ.get("DELETE_AFTER_DAYS", "0"))
-
+RETRY_MAX_ATTEMPTS = int(os.environ.get("RETRY_MAX_ATTEMPTS", "5"))
+RETRY_WAIT_MIN = int(os.environ.get("RETRY_WAIT_MIN", "10"))
+RETRY_WAIT_MAX = int(os.environ.get("RETRY_WAIT_MAX", "120"))
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -75,7 +89,6 @@ def check_source_config():
         _log(f"Error: missing environment variables: {', '.join(missing)}", error=True)
         sys.exit(1)
 
-
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -84,7 +97,6 @@ def _log(msg, error=False):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     out = sys.stderr if error else sys.stdout
     print(f"[{ts}] {msg}", file=out, flush=True)
-
 
 # ---------------------------------------------------------------------------
 # POP3 state — tracks processed Message-IDs across runs
@@ -101,7 +113,6 @@ def _load_pop3_state() -> set:
 def _save_pop3_state(seen: set):
     Path(POP3_STATE_FILE).parent.mkdir(parents=True, exist_ok=True)
     Path(POP3_STATE_FILE).write_text(json.dumps({"seen": list(seen)}))
-
 
 # ---------------------------------------------------------------------------
 # POP3 date parsing helper
@@ -121,6 +132,30 @@ def _parse_date(date_str: str):
     except Exception:
         return None
 
+# ---------------------------------------------------------------------------
+# Retry helpers
+# ---------------------------------------------------------------------------
+
+def _make_retry(protocol_name: str):
+    """Return a tenacity @retry decorator configured from env vars."""
+
+    def _before_sleep(retry_state):
+        exc = retry_state.outcome.exception()
+        attempt = retry_state.attempt_number
+        next_wait = retry_state.next_action.sleep
+        _log(
+            f"{protocol_name} connection failed (attempt {attempt}/{RETRY_MAX_ATTEMPTS}): "
+            f"{exc}. Retrying in {next_wait:.0f}s...",
+            error=True,
+        )
+
+    return retry(
+        retry=retry_if_exception_type(Exception),
+        stop=stop_after_attempt(RETRY_MAX_ATTEMPTS),
+        wait=wait_exponential(multiplier=1, min=RETRY_WAIT_MIN, max=RETRY_WAIT_MAX),
+        before_sleep=_before_sleep,
+        reraise=True,
+    )
 
 # ---------------------------------------------------------------------------
 # POP3 fetch
@@ -132,7 +167,7 @@ def fetch_pop3(callback):
     Message-ID in POP3_STATE_FILE), call callback(raw_bytes) for each.
 
     callback(raw_bytes) must return True on success so the Message-ID is
-    persisted as seen. Returns without raising on connection errors (logged).
+    persisted as seen.  Returns without raising on connection errors (logged).
 
     If DELETE_AFTER_DAYS > 0, messages older than that threshold are deleted
     from the server via pop.dele() and removed from the state file, keeping
@@ -141,18 +176,23 @@ def fetch_pop3(callback):
     and nothing is deleted.
 
     Notes:
-      - POP3 has no folders: only INBOX is supported.
-      - FETCH_SPAM is ignored for POP3.
+    - POP3 has no folders: only INBOX is supported.
+    - FETCH_SPAM is ignored for POP3.
     """
     seen = _load_pop3_state()
     new_seen = set(seen)
 
-    try:
+    @_make_retry("POP3")
+    def _connect():
         pop = poplib.POP3_SSL(MAIL_HOST, MAIL_PORT)
         pop.user(MAIL_USER)
         pop.pass_(MAIL_PASS)
+        return pop
+
+    try:
+        pop = _connect()
     except Exception as e:
-        _log(f"POP3 connection failed: {e}", error=True)
+        _log(f"POP3 connection failed after {RETRY_MAX_ATTEMPTS} attempts: {e}", error=True)
         raise
 
     try:
@@ -163,9 +203,9 @@ def fetch_pop3(callback):
 
         # Scan all message headers once: collect new messages to process and,
         # when DELETE_AFTER_DAYS is set, all messages old enough to delete.
-        new_msgs     = []  # [(index, msg_id)]
-        to_delete    = []  # [(index, msg_id)]
-        cutoff       = None
+        new_msgs = []   # [(index, msg_id)]
+        to_delete = []  # [(index, msg_id)]
+        cutoff = None
         if DELETE_AFTER_DAYS > 0:
             cutoff = datetime.now() - timedelta(days=DELETE_AFTER_DAYS)
 
@@ -219,7 +259,6 @@ def fetch_pop3(callback):
         except Exception:
             pass
 
-
 # ---------------------------------------------------------------------------
 # IMAP fetch
 # ---------------------------------------------------------------------------
@@ -232,11 +271,17 @@ def fetch_imap(callback):
     callback(raw_bytes, folder, is_spam) must return True on success so
     the message is marked \\Seen on the server.
     """
-    try:
+
+    @_make_retry("IMAP")
+    def _connect():
         imap = imaplib.IMAP4_SSL(MAIL_HOST, MAIL_PORT)
         imap.login(MAIL_USER, MAIL_PASS)
+        return imap
+
+    try:
+        imap = _connect()
     except Exception as e:
-        _log(f"IMAP connection failed: {e}", error=True)
+        _log(f"IMAP connection failed after {RETRY_MAX_ATTEMPTS} attempts: {e}", error=True)
         raise
 
     try:
@@ -292,6 +337,7 @@ def _imap_delete_old(imap, folder):
     except Exception as e:
         _log(f"Error selecting '{folder}' for deletion: {e}", error=True)
         return
+
     cutoff = (datetime.now() - timedelta(days=DELETE_AFTER_DAYS)).strftime("%d-%b-%Y")
     # Only delete SEEN messages — never touch unprocessed ones
     _, data = imap.search(None, f"SEEN BEFORE {cutoff}")
@@ -299,11 +345,11 @@ def _imap_delete_old(imap, folder):
     if not ids:
         _log(f"[{folder}] No seen messages to delete (older than {cutoff}).")
         return
+
     for num in ids:
         imap.store(num, "+FLAGS", "\\Deleted")
     imap.expunge()
     _log(f"[{folder}] Deleted {len(ids)} seen message(s) older than {cutoff}.")
-
 
 # ---------------------------------------------------------------------------
 # Unified entry point
@@ -315,7 +361,7 @@ def fetch(callback_imap, callback_pop3=None):
 
     Signatures:
       callback_imap(raw_bytes, folder, is_spam) -> bool
-      callback_pop3(raw_bytes)                  -> bool  (optional)
+      callback_pop3(raw_bytes) -> bool  (optional)
 
     If SOURCE_PROTOCOL=pop3 and callback_pop3 is None, callback_imap is
     called as callback_imap(raw_bytes, "POP3", False).

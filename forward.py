@@ -4,8 +4,10 @@ import email.utils
 import os
 import smtplib
 import sys
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email import encoders
 
 from fetch import check_source_config, fetch, _log as log
 
@@ -13,7 +15,7 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
-DEST      = os.environ.get("DEST", "")
+DEST = os.environ.get("DEST", "")
 
 
 def check_config():
@@ -51,12 +53,12 @@ def format_addr(value):
 
 
 def make_banner_text(from_addr, orig_to, orig_date, orig_subj, folder=None):
-    folder_line = f"Folder:  {folder}\n" if folder else ""
+    folder_line = f"Folder: {folder}\n" if folder else ""
     return (
         "-------- Forwarded message --------\n"
-        f"From:    {from_addr}\n"
-        f"To:      {orig_to}\n"
-        f"Date:    {orig_date}\n"
+        f"From: {from_addr}\n"
+        f"To: {orig_to}\n"
+        f"Date: {orig_date}\n"
         f"Subject: {orig_subj}\n"
         f"{folder_line}"
         "-----------------------------------\n\n"
@@ -66,6 +68,7 @@ def make_banner_text(from_addr, orig_to, orig_date, orig_subj, folder=None):
 def make_banner_html(from_addr, orig_to, orig_date, orig_subj, folder=None):
     def esc(s):
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
     folder_line = f'<b>Folder:</b> {esc(folder)}<br>' if folder else ""
     return (
         '<div style="border:1px solid #ccc;padding:8px;margin-bottom:12px;'
@@ -88,34 +91,37 @@ def decode_part(part):
 
 def send_message(smtp, raw_bytes, folder=None, is_spam=False):
     msg = email.message_from_bytes(raw_bytes)
-    from_raw  = msg.get("From", "")
-    to_raw    = msg.get("To", "")
+
+    from_raw = msg.get("From", "")
+    to_raw = msg.get("To", "")
     orig_date = msg.get("Date", "")
     orig_subj = decode_header_value(msg.get("Subject", "(no subject)"))
     from_addr = format_addr(from_raw)
-    orig_to   = format_addr(to_raw)
-
+    orig_to = format_addr(to_raw)
     display_subj = f"[ ** SPAM ** ] {orig_subj}" if is_spam else orig_subj
 
     banner_text = make_banner_text(from_addr, orig_to, orig_date, orig_subj, folder)
     banner_html = make_banner_html(from_addr, orig_to, orig_date, orig_subj, folder)
 
-    new_msg = MIMEMultipart("alternative")
-    new_msg["From"]     = from_raw
-    new_msg["To"]       = DEST
-    new_msg["Subject"]  = display_subj
-    new_msg["Reply-To"] = from_addr
-    if orig_date:
-        new_msg["Date"] = orig_date
-
     body_text = ""
     body_html = ""
+    attachments = []  # list of MIMEBase parts
 
     if msg.is_multipart():
         for part in msg.walk():
             ct = part.get_content_type()
             cd = part.get("Content-Disposition", "")
+            # Collect attachments
             if "attachment" in cd:
+                filename = part.get_filename() or "attachment"
+                filename = decode_header_value(filename)
+                payload = part.get_payload(decode=True)
+                if payload:
+                    att = MIMEBase(*ct.split("/", 1))
+                    att.set_payload(payload)
+                    encoders.encode_base64(att)
+                    att.add_header("Content-Disposition", "attachment", filename=filename)
+                    attachments.append(att)
                 continue
             if ct == "text/plain" and not body_text:
                 body_text = decode_part(part)
@@ -131,28 +137,47 @@ def send_message(smtp, raw_bytes, folder=None, is_spam=False):
     if not body_text and body_html:
         body_text = "[HTML message - see below]\n"
 
+    # Build the text/html alternative part
+    alternative = MIMEMultipart("alternative")
     if body_text:
-        new_msg.attach(MIMEText(banner_text + body_text, "plain", "utf-8"))
+        alternative.attach(MIMEText(banner_text + body_text, "plain", "utf-8"))
     if body_html:
         if "<body" in body_html.lower():
             insert_pos = body_html.lower().find("<body")
-            close_tag  = body_html.find(">", insert_pos)
-            body_html  = body_html[:close_tag+1] + banner_html + body_html[close_tag+1:]
+            close_tag = body_html.find(">", insert_pos)
+            body_html = body_html[:close_tag + 1] + banner_html + body_html[close_tag + 1:]
         else:
             body_html = banner_html + body_html
-        new_msg.attach(MIMEText(body_html, "html", "utf-8"))
-
+        alternative.attach(MIMEText(body_html, "html", "utf-8"))
     if not body_text and not body_html:
-        new_msg.attach(MIMEText(banner_text + "[Empty body]", "plain", "utf-8"))
+        alternative.attach(MIMEText(banner_text + "[Empty body]", "plain", "utf-8"))
 
-    smtp.sendmail(SMTP_USER, DEST, new_msg.as_bytes())
-    log(f"Forwarded: {orig_subj} | From: {from_addr}")
+    # Wrap in multipart/mixed only when there are attachments
+    if attachments:
+        outer = MIMEMultipart("mixed")
+        outer.attach(alternative)
+        for att in attachments:
+            outer.attach(att)
+        payload_msg = outer
+    else:
+        payload_msg = alternative
+
+    payload_msg["From"] = from_raw
+    payload_msg["To"] = DEST
+    payload_msg["Subject"] = display_subj
+    payload_msg["Reply-To"] = from_addr
+    if orig_date:
+        payload_msg["Date"] = orig_date
+
+    smtp.sendmail(SMTP_USER, DEST, payload_msg.as_bytes())
+
+    att_note = f" ({len(attachments)} attachment(s))" if attachments else ""
+    log(f"Forwarded: {orig_subj} | From: {from_addr}{att_note}")
     return True
 
 
 def run():
     check_config()
-
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
         smtp.starttls()
         smtp.login(SMTP_USER, SMTP_PASS)
