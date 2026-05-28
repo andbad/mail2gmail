@@ -7,23 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.2.1] - 2026-05-28
+
+### Fixed
+
+- **`import.py` — duplicate detection now checks the error body, not just the HTTP status.** Previously any Gmail API `400` response was treated as a duplicate Message-ID and silently swallowed. Other `400` causes (malformed message, invalid encoding, oversized headers) are now re-raised as real errors, so the message is not marked as seen and will be retried on the next cycle.
+- **`fetch.py` — `_parse_date` now correctly normalises to UTC before stripping timezone info.** The previous `ts.replace(tzinfo=None)` discarded the UTC offset without converting the value, causing `DELETE_AFTER_DAYS` to be inaccurate by the sender's UTC offset (e.g. up to ±14 hours). Fixed by using `ts.astimezone(timezone.utc).replace(tzinfo=None)` and comparing against `datetime.utcnow()`.
+
+---
+
 ## [3.2.0] - 2026-05-28
 
 ### Added
 
-- `requirements.txt` with pinned dependency versions, replacing the inline
-  `pip install` list in the Dockerfile. Enables reproducible builds and
-  automated dependency tracking.
-- Dependabot configuration (`.github/dependabot.yml`) for automated weekly
-  PRs on both `pip` and `docker` ecosystems.
-- `TZ` environment variable in all `docker-compose.example.yml` service
-  definitions (default: `Europe/Rome`). Fixes log timestamps showing UTC
-  instead of local time on hosts with a non-UTC timezone.
+- `requirements.txt` with pinned dependency versions, replacing the inline `pip install` list in the Dockerfile. Enables reproducible builds and automated dependency tracking.
+- Dependabot configuration (`.github/dependabot.yml`) for automated weekly PRs on both `pip` and `docker` ecosystems.
+- `TZ` environment variable documented in all `docker-compose.example.yml` service definitions (default: `Europe/Rome`). Fixes log timestamps showing UTC instead of local time on hosts with a non-UTC timezone.
 
 ### Changed
 
-- `Dockerfile`: now installs dependencies via `COPY requirements.txt` +
-  `pip install -r`, instead of a single inline `pip install` command.
+- `Dockerfile`: now installs dependencies via `COPY requirements.txt` + `pip install -r`, instead of a single inline `pip install` command.
 
 ---
 
@@ -31,22 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Attachment forwarding in `forward` mode**: attachments are now included in
-  forwarded messages instead of being silently discarded. The outgoing message
-  uses `multipart/mixed` (body as `multipart/alternative` + attachments as
-  `MIMEBase` parts). Attachment count is reported in the forwarded log line.
-- **Exponential backoff with jitter on connection failures**: IMAP and POP3
-  connection attempts are now retried automatically using
-  [tenacity](https://github.com/jd/tenacity). On transient network errors the
-  connector waits before retrying (default: up to 5 attempts, 10–120 s
-  between retries) and logs each attempt. After all retries are exhausted the
-  error is re-raised and the cycle ends normally, resuming at the next
-  `INTERVAL_SEC` tick.
+- **Attachment forwarding in `forward` mode**: attachments are now included in forwarded messages instead of being silently discarded. The outgoing message uses `multipart/mixed` (body as `multipart/alternative` + attachments as `MIMEBase` parts). Attachment count is reported in the log line.
+- **Exponential backoff with jitter on connection failures**: IMAP and POP3 connection attempts are now retried automatically using [tenacity](https://github.com/jd/tenacity). On transient network errors the connector waits before retrying (default: up to 5 attempts, 10–120 s between retries) and logs each attempt. After all retries are exhausted the error is re-raised and the cycle resumes at the next `INTERVAL_SEC` tick.
 - New optional environment variables to tune retry behaviour:
   - `RETRY_MAX_ATTEMPTS` (default: `5`)
   - `RETRY_WAIT_MIN` (default: `10` seconds)
   - `RETRY_WAIT_MAX` (default: `120` seconds)
-- `tenacity==8.*` added as a Docker image dependency.
+- `tenacity` added as a dependency.
 
 ### Fixed
 
@@ -58,23 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **POP3 support** (`SOURCE_PROTOCOL=pop3`): fetches messages from any POP3S
-  server. Processed Message-IDs are tracked in a local state file
-  (`POP3_STATE_FILE`) so messages are not re-downloaded across restarts.
-- `POP3_HOST`, `POP3_PORT`, `POP3_USER`, `POP3_PASS`, `POP3_STATE_FILE`
-  environment variables (all override the corresponding `IMAP_*` defaults when
-  `SOURCE_PROTOCOL=pop3`).
-- POP3 support for `DELETE_AFTER_DAYS`: deletes messages from the server and
-  removes their IDs from the local state file.
-- Comparison table in README documenting IMAP vs POP3 and `forward` vs
-  `import` feature matrix.
+- **POP3 support** (`SOURCE_PROTOCOL=pop3`): fetches messages from any POP3S server. Processed Message-IDs are tracked in a local state file (`POP3_STATE_FILE`) so messages are not re-downloaded across restarts.
+- `POP3_HOST`, `POP3_PORT`, `POP3_USER`, `POP3_PASS`, `POP3_STATE_FILE` environment variables (all override the corresponding `IMAP_*` defaults when `SOURCE_PROTOCOL=pop3`).
+- POP3 support for `DELETE_AFTER_DAYS`: deletes messages from the server and removes their IDs from the local state file.
+- Comparison table in README documenting IMAP vs POP3 and `forward` vs `import` feature matrix.
 
 ### Changed
 
-- Project renamed from `imap2gmail` to `mail2gmail` to reflect multi-protocol
-  support.
-- `fetch.py` refactored into a unified dispatch layer (`fetch()`) supporting
-  both IMAP and POP3 backends.
+- Project renamed from `imap2gmail` to `mail2gmail` to reflect multi-protocol support.
+- `fetch.py` refactored into a unified dispatch layer (`fetch()`) supporting both IMAP and POP3 backends.
 - All `IMAP_*` environment variables remain fully backward-compatible.
 
 ### Migration from imap2gmail (v2)
